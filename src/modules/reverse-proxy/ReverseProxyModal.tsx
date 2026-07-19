@@ -202,6 +202,20 @@ export default function ReverseProxyModal({
   const effectiveL4Mode =
     portMappings[0]?.protocol ??
     (serviceMode as ReverseProxyPortMapping["protocol"]);
+
+  // The first mapping is the legacy mode/listener compatibility mirror. Keep
+  // the selector, title, and protocol-specific settings aligned when mappings
+  // are edited or reordered.
+  React.useEffect(() => {
+    if (
+      isL4ServiceMode(serviceMode) &&
+      portMappings[0]?.protocol &&
+      serviceMode !== portMappings[0].protocol
+    ) {
+      setServiceMode(portMappings[0].protocol);
+    }
+  }, [portMappings, serviceMode]);
+
   const hasTCPMappings = portMappings.some(
     (mapping) =>
       mapping.protocol === ServiceMode.TCP ||

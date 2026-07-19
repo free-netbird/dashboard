@@ -90,6 +90,13 @@ test.describe
     );
 
     await page.getByTestId("destination-port-input").fill("5060");
+    await page.getByTestId("destination-port-end-0").fill("5061");
+    await expect(
+      page.getByText(
+        "An auto-assigned listener supports one destination port, not a range.",
+      ),
+    ).toBeVisible();
+    await page.getByTestId("destination-port-end-0").fill("5060");
     await page.getByTestId("proxy-continue").click();
 
     await addAccessControlRules(page);

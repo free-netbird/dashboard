@@ -101,6 +101,17 @@ export function getPortMappingErrors(
     }
 
     if (
+      !explicitListener &&
+      isValidPort(mapping.target_port_start) &&
+      isValidPort(mapping.target_port_end) &&
+      mapping.target_port_start !== mapping.target_port_end
+    ) {
+      errors[index].push(
+        "An auto-assigned listener supports one destination port, not a range.",
+      );
+    }
+
+    if (
       explicitListener &&
       isValidPort(mapping.listen_port_start) &&
       isValidPort(mapping.listen_port_end) &&
