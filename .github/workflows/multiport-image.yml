@@ -1,0 +1,115 @@
+name: Multi-port dashboard image
+
+on:
+  push:
+    branches:
+      - codex/multiport-only
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  attestations: write
+  id-token: write
+
+concurrency:
+  group: multiport-dashboard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    name: Build dashboard
+    if: github.repository == 'free-netbird/dashboard' && github.ref == 'refs/heads/codex/multiport-only'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 20.19.2
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare build configuration
+        run: printf '{}\n' > .local-config.json
+
+      - name: Download and verify IronRDP v0.0.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=https://github.com/netbirdio/IronRDP/releases/download/v0.0.2
+          mkdir -p public/ironrdp-pkg
+          curl --fail --location --silent --show-error \
+            "$base/ironrdp_web.d.ts" -o public/ironrdp-pkg/ironrdp_web.d.ts
+          curl --fail --location --silent --show-error \
+            "$base/ironrdp_web.js" -o public/ironrdp-pkg/ironrdp_web.js
+          curl --fail --location --silent --show-error \
+            "$base/ironrdp_web_bg.wasm" -o public/ironrdp-pkg/ironrdp_web_bg.wasm
+          curl --fail --location --silent --show-error \
+            "$base/ironrdp_web_bg.wasm.d.ts" -o public/ironrdp-pkg/ironrdp_web_bg.wasm.d.ts
+          printf '%s  %s\n' \
+            a7818512bb18bd5cc3f237d616e6a203742c7152a60aaffca336b8f12dc67678 public/ironrdp-pkg/ironrdp_web.d.ts \
+            d325a35d6c86d7a83f0ca48079898323ec03d96c6f93ba2f824317476bcda207 public/ironrdp-pkg/ironrdp_web.js \
+            7f83df3fdd07985e90e74f932aa9a0ad4fa3debb07d36b3430004f1b2c20ae33 public/ironrdp-pkg/ironrdp_web_bg.wasm \
+            df61fad9d7c70c9b4f850be687efb699f10676da3b6dd989e384985c8d387fa1 public/ironrdp-pkg/ironrdp_web_bg.wasm.d.ts \
+            | sha256sum --check --strict
+
+      - name: Build production dashboard
+        run: npm run build
+        env:
+          NEXT_PUBLIC_DASHBOARD_VERSION: multiport-${{ github.sha }}
+
+      - name: Stage Docker build exclusions
+        run: install -m 0644 docker/.dockerignore .dockerignore
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/free-netbird/dashboard:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=dashboard-multiarch
+          cache-to: type=gha,mode=max,scope=dashboard-multiarch
+
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ghcr.io/free-netbird/dashboard
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Record immutable image reference
+        env:
+          IMAGE: ghcr.io/free-netbird/dashboard
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "Discovery tag: \`${IMAGE}:sha-${GITHUB_SHA}\`"
+            echo "Immutable reference: \`${IMAGE}@${DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
